@@ -9,6 +9,8 @@ import io.ktor.client.plugins.*
 import io.ktor.client.request.*
 import io.ktor.client.request.forms.FormDataContent
 import io.ktor.client.request.forms.MultiPartFormDataContent
+import io.ktor.content.ByteArrayContent
+import io.ktor.content.TextContent
 import io.ktor.http.*
 import io.ktor.util.*
 import io.ktor.util.collections.*
@@ -19,7 +21,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
-import io.ktor.content.* // For OutgoingContent impls when available; on newer Ktor this is in io.ktor.http.content.*
 import io.ktor.http.content.OutgoingContent
 import io.ktor.http.encodeURLQueryComponent
 
@@ -225,11 +226,11 @@ class DuplicateRequestGuard private constructor(
                 val existing = inFlight[key]
                 if (existing != null) {
                     // Wait for the first identical request; return a saved copy
-                    val winnerCall = existing.await()
+                    val winnerSaved = existing.await()
                     try {
                         DedupeLogger.log("DuplicateRequestGuard: coalesced concurrent for key=$key")
                     } catch (_: Throwable) { }
-                    proceedWith(winnerCall.save())
+                    proceedWith(winnerSaved.save())
                     return@intercept
                 }
 
@@ -245,14 +246,18 @@ class DuplicateRequestGuard private constructor(
                     proceed() // executes the request, sets subject to HttpClientCall
                     val call = subject as HttpClientCall
 
+                    // Create a replayable copy immediately
+                    val saved = call.save()
+                    subject = saved // original caller gets the saved copy
+
                     // Decide if we should cache this result for the window
-                    val status = call.response.status
+                    val status = saved.response.status
                     val okToCache = plugin.cacheNon2xx || status.isSuccess() || status == HttpStatusCode.NotModified
 
                     if (okToCache) {
                         cacheMutex.withLock {
                             purgeExpired(now)
-                            cache[key] = Cached(call, now + plugin.window)
+                            cache[key] = Cached(saved, now + plugin.window)
                         }
                     }
 
@@ -348,9 +353,10 @@ class DuplicateRequestGuard private constructor(
      */
     private fun buildHeadersPart(headers: HeadersBuilder, include: Set<String>): String {
         if (include.isEmpty()) return "h-off"
-        val wanted = include.mapNotNull { k ->
-            val values = headers.getAll(k) ?: headers.getAll(k.lowercase()) ?: return@mapNotNull null
-            k.lowercase() to values.sorted()
+        val wanted = include.mapNotNull { raw ->
+            val key = raw.lowercase()
+            val values = headers.getAll(key) ?: headers.getAll(raw) ?: return@mapNotNull null
+            key to values.sorted()
         }.sortedBy { it.first }
         if (wanted.isEmpty()) return "h-none"
         val sb = StringBuilder()
@@ -399,7 +405,7 @@ class DuplicateRequestGuard private constructor(
             // Canonicalize form fields (order-independent)
             val pairs = body.formData.entries().flatMap { (name, values) ->
                 values.map { v -> name to v }
-            }.sortedBy { it.first }
+            }.sortedWith(compareBy({ it.first }, { it.second }))
             sha256Base64(pairs.joinToString("&") { "${it.first}=${it.second}" }.encodeToByteArray())
         }
         is MultiPartFormDataContent -> null // not stable to hash here portable across KMP
@@ -416,8 +422,7 @@ class DuplicateRequestGuard private constructor(
      * @return base64-encoded sha256 digest as a compact identity segment.
      */
     private fun sha256Base64(bytes: ByteArray): String {
-        val digest = HashUtils.sha256Base64(bytes)
-        return digest.encodeBase64()
+        return HashUtils.sha256Base64(bytes)
     }
 
     private fun sha256Base64(s: String): String = sha256Base64(s.encodeToByteArray())
