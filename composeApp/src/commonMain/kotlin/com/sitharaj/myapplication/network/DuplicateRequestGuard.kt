@@ -64,6 +64,22 @@ class DuplicateKey(
 }
 
 /**
+ * Per-request marker (stored in request attributes) used to explicitly skip
+ * duplicate detection for a single request. This is a convenience for Java
+ * callers who prefer a readable attribute instead of creating a
+ * [DuplicateKey] with `dedupe = false`.
+ *
+ * Usage (Kotlin):
+ * requestBuilder.skipDuplicate()
+ *
+ * From Java, put a `Boolean.TRUE` into the attribute using
+ * `SkipDuplicate.Key` to request skipping dedupe for that request.
+ */
+object SkipDuplicate {
+    val Key: AttributeKey<Boolean> = AttributeKey("DuplicateRequestGuard.Skip")
+}
+
+/**
  * A client plugin that prevents duplicate HTTP requests from executing
  * repeatedly in a short window. DuplicateRequestGuard performs two distinct
  * optimizations:
@@ -188,6 +204,12 @@ class DuplicateRequestGuard private constructor(
 
                 // Per-request overrides
                 val overrides = req.attributes.getOrNull(DuplicateKey.Key)
+                // A dedicated skip attribute short-circuits deduplication for this call.
+                val skipAttr = req.attributes.getOrNull(SkipDuplicate.Key)
+                if (skipAttr == true) {
+                    proceed()
+                    return@intercept
+                }
 
                 // Skip entirely if dedupe disabled for this request
                 val shouldDedupe = overrides?.dedupe ?: true
@@ -449,4 +471,18 @@ fun HttpRequestBuilder.duplicateKey(
     dedupe: Boolean = true
 ) {
     attributes.put(DuplicateKey.Key, DuplicateKey(keyOverride, includeBody, dedupe))
+}
+
+/**
+ * Convenience extension to explicitly skip duplicate detection for a single
+ * request. This is equivalent to calling `duplicateKey(dedupe = false)` but
+ * can be clearer at call-sites.
+ *
+ * Example (Kotlin):
+ * requestBuilder.skipDuplicate()
+ *
+ * From Java, set the attribute directly: `request.getAttributes().put(SkipDuplicate.Key, true)`
+ */
+fun HttpRequestBuilder.skipDuplicate(skip: Boolean = true) {
+    attributes.put(SkipDuplicate.Key, skip)
 }

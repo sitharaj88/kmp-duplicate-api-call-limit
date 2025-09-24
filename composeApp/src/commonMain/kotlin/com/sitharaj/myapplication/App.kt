@@ -73,7 +73,7 @@ fun App() {
                         val urls = listOf(url1, url1, url1, url1, url2, url2, url3, url4)
 
                          // Create Deferreds (CompletableDeferred implements Deferred)
-                         val deferreds: List<kotlinx.coroutines.Deferred<com.sitharaj.myapplication.network.Post>> =
+                         val deferred: List<kotlinx.coroutines.Deferred<com.sitharaj.myapplication.network.Post>> =
                              urls.map { u ->
                                  val d = CompletableDeferred<com.sitharaj.myapplication.network.Post>()
                                  scope.launch {
@@ -88,7 +88,7 @@ fun App() {
                              }
 
                          // Await all results concurrently
-                         val results = deferreds.awaitAll()
+                         val results = deferred.awaitAll()
 
                         // Attach the originating URL to each result for clarity and store in the list
                         testResults = results.mapIndexed { idx, post ->

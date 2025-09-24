@@ -9,7 +9,6 @@ import io.ktor.http.HttpMethod
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 // Shared HttpClient constructed in common code. Platform-specific engines
@@ -31,13 +30,23 @@ private val sharedClient: HttpClient = HttpClient {
 }
 
 class ApiClient(val client: HttpClient = sharedClient) {
-    suspend fun getExample(url: String): ExampleResponse {
-        return client.get(url).body()
+    /**
+     * Fetch an example response from [url].
+     * @param url Target URL.
+     * @param skipDedup When true, this request will skip the DuplicateRequestGuard
+     *                  plugin's deduplication behavior for this single call.
+     */
+    suspend fun getExample(url: String, skipDedup: Boolean = false): ExampleResponse {
+        return client.get(url) {
+            if (skipDedup) skipDuplicate()
+        }.body()
     }
 
     // Reified convenience helper named 'fetch'
-    suspend inline fun <reified T> fetch(url: String): T {
-        return client.get(url).body()
+    suspend inline fun <reified T> fetch(url: String, skipDedup: Boolean = false): T {
+        return client.get(url) {
+            if (skipDedup) skipDuplicate()
+        }.body()
     }
 
     fun close() {
